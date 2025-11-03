@@ -1,14 +1,20 @@
-from flask import Flask, jsonify, request
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import sqlite3
 import os
 from datetime import datetime
+import base64
+import uuid
 
 app = Flask(__name__)
 CORS(app) 
 
 DB_FILE = "midias.db"
+MEDIA_FOLDER = "media"
+
+# Create media folder if it doesn't exist
+if not os.path.exists(MEDIA_FOLDER):
+    os.makedirs(MEDIA_FOLDER)
 
 # ============================================================
 # FUNÇÕES DO BANCO DE DADOS
@@ -30,7 +36,9 @@ def init_db():
         duration INTEGER DEFAULT 0,
         fileSize INTEGER DEFAULT 0,
         dateAdded TEXT DEFAULT (datetime('now')),
-        numeroDias TEXT DEFAULT (datetime('now'))          
+        lastAccessed TEXT DEFAULT (datetime('now')),
+        deviceId TEXT,
+        deviceName TEXT
     )
 ''')
     
@@ -47,21 +55,6 @@ def get_all_midias():
     
     midias = []
     for row in rows:
-        # Calculate days since added
-        date_added = row[8]
-        if date_added:
-            try:
-                # Parse the date and calculate days
-                from datetime import datetime
-                date_obj = datetime.fromisoformat(date_added.replace('Z', '+00:00'))
-                days_diff = (datetime.now() - date_obj).days
-                numero_dias = str(days_diff)
-            except:
-                # Fallback if date parsing fails
-                numero_dias = "0"
-        else:
-            numero_dias = "0"
-            
         midias.append({
             "id": row[0],
             "name": row[1],
@@ -72,7 +65,9 @@ def get_all_midias():
             "duration": row[6],
             "fileSize": row[7],
             "dateAdded": row[8],
-            "numeroDias": numero_dias,
+            "lastAccessed": row[9],
+            "deviceId": row[10],
+            "deviceName": row[11]
         })
     
     conn.close()
@@ -84,8 +79,8 @@ def add_midia(data):
     cursor = conn.cursor()
     
     cursor.execute('''
-        INSERT INTO midias (name, uri, mimeType, cover, isFavorite, duration, fileSize)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO midias (name, uri, mimeType, cover, isFavorite, duration, fileSize, deviceId, deviceName)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         data.get('name'),
         data.get('uri'),
@@ -93,7 +88,9 @@ def add_midia(data):
         data.get('cover'),
         1 if data.get('isFavorite') else 0,
         data.get('duration', 0),
-        data.get('fileSize', 0)
+        data.get('fileSize', 0),
+        data.get('deviceId'),
+        data.get('deviceName')
     ))
     
     midia_id = cursor.lastrowid
@@ -109,7 +106,7 @@ def update_midia(midia_id, data):
     
     cursor.execute('''
         UPDATE midias 
-        SET name = ?, isFavorite = ?
+        SET name = ?, isFavorite = ?, lastAccessed = datetime('now')
         WHERE id = ?
     ''', (
         data.get('name'),
@@ -231,10 +228,91 @@ def toggle_favorite(midia_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route('/api/midias/upload', methods=['POST'])
+def upload_midia():
+    """Upload de uma nova mídia"""
+    try:
+        # Get form data
+        name = request.form.get('name')
+        mimeType = request.form.get('mimeType')
+        deviceId = request.form.get('deviceId')
+        deviceName = request.form.get('deviceName')
+        isFavorite = request.form.get('isFavorite', False)
+        
+        if not name or not mimeType:
+            return jsonify({"error": "Dados inválidos"}), 400
+        
+        # Handle file upload
+        if 'file' not in request.files:
+            return jsonify({"error": "Nenhum arquivo enviado"}), 400
+            
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "Nome de arquivo inválido"}), 400
+            
+        # Save file
+        file_extension = os.path.splitext(file.filename)[1] if file.filename else ''
+        filename = str(uuid.uuid4()) + file_extension
+        file_path = os.path.join(MEDIA_FOLDER, filename)
+        file.save(file_path)
+        
+        # Save to database
+        data = {
+            'name': name,
+            'uri': f"/api/midias/media/{filename}",
+            'mimeType': mimeType,
+            'deviceId': deviceId,
+            'deviceName': deviceName,
+            'isFavorite': isFavorite
+        }
+        
+        midia_id = add_midia(data)
+        
+        new_midia = {
+            "id": midia_id,
+            "name": name,
+            "uri": f"http://localhost:5003/api/midias/media/{filename}",
+            "mimeType": mimeType,
+            "deviceId": deviceId,
+            "deviceName": deviceName,
+            "isFavorite": isFavorite,
+            "dateAdded": datetime.now().isoformat()
+        }
+        
+        return jsonify(new_midia), 201
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/midias/media/<filename>')
+@app.route('/api/files/<filename>')
+def serve_media(filename):
+    """Servir arquivo de mídia"""
+    try:
+        return send_from_directory(MEDIA_FOLDER, filename)
+    except Exception as e:
+        return jsonify({"error": "Arquivo não encontrado"}), 404
+
+def update_existing_media_uris():
+    """Atualiza URIs de mídias existentes para o novo formato"""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    
+    # Update URIs that point to /api/files/ to use /api/midias/media/
+    cursor.execute("""
+        UPDATE midias 
+        SET uri = REPLACE(uri, '/api/files/', '/api/midias/media/')
+        WHERE uri LIKE '%/api/files/%'
+    """)
+    
+    conn.commit()
+    conn.close()
+
 # ============================================================
 # INICIALIZAÇÃO
 # ============================================================
 
 if __name__ == '__main__':
     init_db()
+    update_existing_media_uris()
     app.run(host='0.0.0.0', port=5003, debug=False)
