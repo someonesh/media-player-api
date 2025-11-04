@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from flasgger import Swagger, swag_from
 import sqlite3
 import os
 from datetime import datetime
@@ -7,7 +8,53 @@ import base64
 import uuid
 
 app = Flask(__name__)
-CORS(app) 
+CORS(app)
+
+# Configuração do Swagger
+swagger_config = {
+    "headers": [],
+    "specs": [
+        {
+            "endpoint": "apispec",
+            "route": "/apispec.json",
+            "rule_filter": lambda rule: True,
+            "model_filter": lambda tag: True,
+        }
+    ],
+    "static_url_path": "/flasgger_static",
+    "swagger_ui": True,
+    "specs_route": "/docs"
+}
+
+swagger_template = {
+    "swagger": "2.0",
+    "info": {
+        "title": "Mídia Player API",
+        "description": "API para gerenciamento de mídias (áudio e vídeo)",
+        "version": "1.0.0",
+        "contact": {
+            "name": "API Support",
+        }
+    },
+    "basePath": "/",
+    "schemes": ["http", "https"],
+    "tags": [
+        {
+            "name": "Test",
+            "description": "Endpoints de teste"
+        },
+        {
+            "name": "Mídias",
+            "description": "Operações com mídias"
+        },
+        {
+            "name": "Estatísticas",
+            "description": "Estatísticas da base de dados"
+        }
+    ]
+}
+
+swagger = Swagger(app, config=swagger_config, template=swagger_template) 
 
 DB_FILE = "midias.db"
 MEDIA_FOLDER = "media"
@@ -150,22 +197,94 @@ def index():
         "endpoints": {
             "test": "/test",
             "test_page": "/test-page",
+            "swagger_docs": "/docs",
             "api_midias": "/api/midias",
             "stats": "/api/stats",
             "db_info": "/api/db/info",
             "favorites": "/api/midias/favorites"
         },
-        "documentation": "Acesse /test-page para interface de teste"
+        "documentation": {
+            "swagger": "Acesse /docs para documentação Swagger/OpenAPI",
+            "test_page": "Acesse /test-page para interface de teste"
+        }
     }), 200
 
 @app.route('/test')
 def test():
-    """Rota de teste"""
+    """
+    Testa se a API está funcionando
+    ---
+    tags:
+      - Test
+    responses:
+      200:
+        description: API funcionando corretamente
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+              example: OK
+            message:
+              type: string
+              example: API funcionando!
+    """
     return jsonify({"status": "OK", "message": "API funcionando!"})
 
 @app.route('/api/midias', methods=['GET'])
 def get_midias():
-    """Lista todas as mídias"""
+    """
+    Lista todas as mídias cadastradas
+    ---
+    tags:
+      - Mídias
+    responses:
+      200:
+        description: Lista de todas as mídias
+        schema:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: integer
+                example: 1
+              name:
+                type: string
+                example: "Música Exemplo"
+              uri:
+                type: string
+                example: "/api/midias/media/arquivo.mp3"
+              mimeType:
+                type: string
+                example: "audio/mpeg"
+              cover:
+                type: string
+                nullable: true
+              isFavorite:
+                type: boolean
+                example: false
+              duration:
+                type: integer
+                example: 180
+              fileSize:
+                type: integer
+                example: 5242880
+              dateAdded:
+                type: string
+                example: "2024-01-01 12:00:00"
+              lastAccessed:
+                type: string
+                example: "2024-01-01 12:00:00"
+              deviceId:
+                type: string
+                nullable: true
+              deviceName:
+                type: string
+                nullable: true
+      500:
+        description: Erro ao buscar mídias
+    """
     try:
         # Garantir que o banco está inicializado
         init_db()
@@ -182,7 +301,62 @@ def get_midias():
 
 @app.route('/api/midias', methods=['POST'])
 def create_midia():
-    """Adiciona uma nova mídia"""
+    """
+    Adiciona uma nova mídia
+    ---
+    tags:
+      - Mídias
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - name
+            - uri
+            - mimeType
+          properties:
+            name:
+              type: string
+              example: "Nova Música"
+            uri:
+              type: string
+              example: "/api/midias/media/arquivo.mp3"
+            mimeType:
+              type: string
+              example: "audio/mpeg"
+            cover:
+              type: string
+              nullable: true
+            isFavorite:
+              type: boolean
+              example: false
+            duration:
+              type: integer
+              example: 180
+            fileSize:
+              type: integer
+              example: 5242880
+    responses:
+      201:
+        description: Mídia criada com sucesso
+        schema:
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+            uri:
+              type: string
+            mimeType:
+              type: string
+      400:
+        description: Dados inválidos
+      500:
+        description: Erro ao criar mídia
+    """
     try:
         data = request.json
         if not data:
@@ -367,7 +541,40 @@ def get_favorites():
 
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
-    """Retorna estatísticas da base de dados"""
+    """
+    Retorna estatísticas da base de dados
+    ---
+    tags:
+      - Estatísticas
+    responses:
+      200:
+        description: Estatísticas da base de dados
+        schema:
+          type: object
+          properties:
+            total_midias:
+              type: integer
+              example: 50
+            total_favorites:
+              type: integer
+              example: 10
+            by_mime_type:
+              type: object
+              example:
+                audio/mpeg: 30
+                audio/m4a: 15
+            total_file_size:
+              type: integer
+              example: 524288000
+            total_duration:
+              type: integer
+              example: 3600
+            total_duration_formatted:
+              type: string
+              example: "60 minutos"
+      500:
+        description: Erro ao buscar estatísticas
+    """
     try:
         conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
