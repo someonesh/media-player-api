@@ -65,7 +65,7 @@ def get_all_midias():
             "duration": row[6],
             "fileSize": row[7],
             "dateAdded": row[8],
-            "lastAccessed": row[9],
+            "lastAccessed": row[9],  # This should be lastAccessed
             "deviceId": row[10],
             "deviceName": row[11]
         })
@@ -79,8 +79,8 @@ def add_midia(data):
     cursor = conn.cursor()
     
     cursor.execute('''
-        INSERT INTO midias (name, uri, mimeType, cover, isFavorite, duration, fileSize, deviceId, deviceName)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO midias (name, uri, mimeType, cover, isFavorite, duration, fileSize, dateAdded, lastAccessed)
+        VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
     ''', (
         data.get('name'),
         data.get('uri'),
@@ -88,9 +88,7 @@ def add_midia(data):
         data.get('cover'),
         1 if data.get('isFavorite') else 0,
         data.get('duration', 0),
-        data.get('fileSize', 0),
-        data.get('deviceId'),
-        data.get('deviceName')
+        data.get('fileSize', 0)
     ))
     
     midia_id = cursor.lastrowid
@@ -292,6 +290,15 @@ def serve_media(filename):
         return send_from_directory(MEDIA_FOLDER, filename)
     except Exception as e:
         return jsonify({"error": "Arquivo não encontrado"}), 404
+
+@app.route('/debug')
+def debug():
+    """Debug route to check data"""
+    midias = get_all_midias()
+    return jsonify({
+        "midias": midias,
+        "count": len(midias)
+    })
 
 def update_existing_media_uris():
     """Atualiza URIs de mídias existentes para o novo formato"""
